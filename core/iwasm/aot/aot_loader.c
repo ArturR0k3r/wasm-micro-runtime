@@ -2663,10 +2663,13 @@ try_merge_data_and_text(const uint8 **buf, const uint8 **buf_end,
 
     /* calculate the total memory needed */
     total_size += align_uint64((uint64)code_size, page_size);
+#ifndef CONFIG_SOC_SERIES_ESP32S3
+    /* On ESP32-S3 only code needs IRAM; data sections stay in regular RAM */
     for (i = 0; i < module->data_section_count; ++i) {
         total_size +=
             align_uint64((uint64)module->data_sections[i].size, page_size);
     }
+#endif
     /* distance between .data and .text should not be greater than 4GB
        for some targets (e.g. arm64 reloc need < 4G distance) */
     if (total_size > UINT32_MAX) {
@@ -2675,7 +2678,7 @@ try_merge_data_and_text(const uint8 **buf, const uint8 **buf_end,
     /* code_size was checked and must be larger than 0 here */
     bh_assert(total_size > 0);
 
-    sections = loader_mmap((uint32)total_size, false, NULL, 0);
+    sections = loader_mmap((uint32)total_size, true, NULL, 0);
     if (!sections) {
         /* merge failed but may be not critical for some targets */
         return false;
@@ -2707,6 +2710,8 @@ try_merge_data_and_text(const uint8 **buf, const uint8 **buf_end,
     os_munmap(old_buf, code_size);
     sections += align_uint((uint32)code_size, page_size);
 
+#ifndef CONFIG_SOC_SERIES_ESP32S3
+    /* On ESP32-S3 data sections stay in their original allocation */
     /* then migrate .data sections */
     for (i = 0; i < module->data_section_count; ++i) {
         AOTObjectDataSection *data_section = module->data_sections + i;
@@ -2723,6 +2728,7 @@ try_merge_data_and_text(const uint8 **buf, const uint8 **buf_end,
         module->merged_data_sections = NULL;
         module->merged_data_sections_size = 0;
     }
+#endif
 
     return true;
 }
@@ -4026,17 +4032,19 @@ load_from_sections(AOTModule *module, AOTSection *sections,
                     return false;
                 break;
             case AOT_SECTION_TYPE_TEXT:
-#if !defined(BH_PLATFORM_NUTTX) && !defined(BH_PLATFORM_ESP_IDF)
+#if !defined(BH_PLATFORM_NUTTX) && !defined(BH_PLATFORM_ESP_IDF) \
+    && !defined(CONFIG_SOC_SERIES_ESP32S3)
                 /* try to merge .data and .text, with exceptions:
                  * 1. XIP mode
                  * 2. pre-mmapped module load from aot_load_from_sections()
                  * 3. nuttx & esp-idf: have separate region for MMAP_PROT_EXEC
+                 * 4. ESP32-S3 Zephyr: IRAM heap too small for two allocations
                  */
                 if (!module->is_indirect_mode && is_load_from_file_buf)
                     if (!try_merge_data_and_text(&buf, &buf_end, module,
                                                  error_buf, error_buf_size))
                         LOG_WARNING("merge .data and .text sections failed");
-#endif /* ! defined(BH_PLATFORM_NUTTX) && !defined(BH_PLATFORM_ESP_IDF) */
+#endif
                 if (!load_text_section(buf, buf_end, module, error_buf,
                                        error_buf_size))
                     return false;
