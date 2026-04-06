@@ -226,6 +226,9 @@ float strtof(const char *nptr, char **endptr);
 
 /* clang-format on */
 
+/* Required for fs_file_t and fs_dir_t used in zephyr_fs_desc below */
+#include <zephyr/fs/fs.h>
+
 #if KERNEL_VERSION_NUMBER >= 0x030100 /* version 3.1.0 */
 #define BH_HAS_SQRT
 #define BH_HAS_SQRTF
