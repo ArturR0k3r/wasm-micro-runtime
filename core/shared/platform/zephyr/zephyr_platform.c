@@ -313,6 +313,13 @@ os_mprotect(void *addr, size_t size, int prot)
     return 0;
 }
 
+#if defined(CONFIG_SOC_SERIES_ESP32S3)
+/* ESP32-S3 ROM cache routines, resolved by esp32s3.rom.ld.  Declared here
+ * rather than via rom/cache.h, which is not on the Zephyr include path. */
+extern void Cache_WriteBack_All(void);
+extern void Cache_Invalidate_ICache_All(void);
+#endif
+
 void
 os_dcache_flush()
 {
@@ -332,9 +339,32 @@ os_dcache_flush()
     __asm__ __volatile__("sync");
 #elif defined(CONFIG_SOC_SERIES_ESP32S3)
     /* Flush data-cache write-backs and invalidate I-cache so the CPU
-     * refetches AOT code from PSRAM through the instruction bus. */
-    sys_cache_data_flush_all();
-    sys_cache_instr_flush_all();
+     * refetches AOT code from PSRAM through the instruction bus.
+     *
+     * Zephyr's cache API cannot do this on an ESP32-S3.  Its Xtensa backend
+     * drives the core caches, and this core has none (XCHAL_DCACHE_SIZE and
+     * XCHAL_ICACHE_SIZE are both 0), so sys_cache_data_flush_all() expands to
+     * nothing and arch_icache_flush_all() is a hardcoded -ENOTSUP.  The caches
+     * that actually back PSRAM belong to the external memory controller and
+     * are only reachable through the ROM cache routines.
+     *
+     * Both halves are required.  aot_exec_alloc() hands out recycled PSRAM, so
+     * a newly loaded module routinely lands on the address range of a module
+     * that has already been executed and freed:
+     *   - Cache_WriteBack_All() pushes the new code, written through the data
+     *     bus, out of the dirty D-cache lines and into PSRAM;
+     *   - Cache_Invalidate_ICache_All() drops the I-cache lines still holding
+     *     the *previous* module's instructions for those addresses.
+     * Without the invalidate the CPU keeps fetching the old module's bytes and
+     * traps on the first stale line ("illegal instruction" inside the freshly
+     * allocated exec region). */
+    {
+        unsigned int key = irq_lock();
+
+        Cache_WriteBack_All();
+        Cache_Invalidate_ICache_All();
+        irq_unlock(key);
+    }
 #endif
 }
 
