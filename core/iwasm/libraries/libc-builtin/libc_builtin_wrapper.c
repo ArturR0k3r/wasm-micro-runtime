@@ -7,6 +7,7 @@
 #include "bh_log.h"
 #include "wasm_export.h"
 #include "../interpreter/wasm.h"
+#include <string.h>
 
 #if defined(_WIN32) || defined(_WIN32_)
 #define strncasecmp _strnicmp
@@ -1042,7 +1043,25 @@ print_f64_wrapper(wasm_exec_env_t exec_env, double f64)
     { #func_name, func_name##_wrapper, signature, NULL }
 /* clang-format on */
 
-static NativeSymbol native_symbols_libc_builtin[] = {
+/* wasm_native_register_natives() (see wasm_native.c's register_natives())
+ * qsort()s whatever pointer it's given in place, so this table can't stay
+ * `const` as-is - but that sort happens once, from wasm_native_init()
+ * (thread context, well after PSRAM init, called from wasm_runtime_full_init()
+ * via akira_runtime_init()). Keep the compile-time initializer as a `const`
+ * template (PSRAM-backed for free via CONFIG_SPIRAM_RODATA), copy it into a
+ * PSRAM-resident mutable buffer in get_libc_builtin_export_apis() before it's
+ * ever registered/sorted - same pattern as this session's native_syms/WiFi
+ * OSI vtable/quick_aot_entries fixes. Defined locally (not via AkiraOS's
+ * AKIRA_BULK_BSS) to keep this vendored file free of app-specific header
+ * includes; CONFIG_AKIRA_PSRAM is visible here like any other Kconfig symbol
+ * under Zephyr's build. */
+#if defined(CONFIG_AKIRA_PSRAM)
+#define LIBC_BUILTIN_SYMS_BULK_BSS __attribute__((section(".ext_ram.bss"), aligned(4)))
+#else
+#define LIBC_BUILTIN_SYMS_BULK_BSS
+#endif
+
+static const NativeSymbol native_symbols_libc_builtin_ro[] = {
     REG_NATIVE_FUNC(printf, "($*)i"),
     REG_NATIVE_FUNC(sprintf, "($$*)i"),
     REG_NATIVE_FUNC(snprintf, "(*~$*)i"),
@@ -1110,9 +1129,14 @@ static NativeSymbol native_symbols_spectest[] = {
 };
 #endif
 
+static NativeSymbol LIBC_BUILTIN_SYMS_BULK_BSS
+    native_symbols_libc_builtin[sizeof(native_symbols_libc_builtin_ro) / sizeof(NativeSymbol)];
+
 uint32
 get_libc_builtin_export_apis(NativeSymbol **p_libc_builtin_apis)
 {
+    memcpy(native_symbols_libc_builtin, native_symbols_libc_builtin_ro,
+           sizeof(native_symbols_libc_builtin_ro));
     *p_libc_builtin_apis = native_symbols_libc_builtin;
     return sizeof(native_symbols_libc_builtin) / sizeof(NativeSymbol);
 }

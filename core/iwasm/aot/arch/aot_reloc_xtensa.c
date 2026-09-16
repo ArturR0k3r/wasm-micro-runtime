@@ -50,7 +50,7 @@ void __floatdisf(void);
 void __floatundisf(void);
 
 
-static SymbolMap target_sym_map[] = {
+static const SymbolMap target_sym_map[] = {
     REG_COMMON_SYMBOLS
 
     /* API's for soft-float */
@@ -109,7 +109,10 @@ SymbolMap *
 get_target_symbol_map(uint32 *sym_num)
 {
     *sym_num = sizeof(target_sym_map) / sizeof(SymbolMap);
-    return target_sym_map;
+    /* Read-only after init (both call sites in aot_loader.c only strcmp/read
+     * through this pointer) - table itself is `const`, this cast just
+     * satisfies the shared cross-arch prototype in aot_reloc.h. */
+    return (SymbolMap *)target_sym_map;
 }
 
 void

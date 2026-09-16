@@ -1426,8 +1426,26 @@ typedef struct QuickAOTEntry {
     void *func_ptr;
 } QuickAOTEntry;
 
+/* quick_aot_entry_init() qsort()s this table in place (below), so it can't
+ * stay `const` - but that sort happens once, from wasm_native_init() (thread
+ * context, well after PSRAM init), and every reader (wasm_loader.c,
+ * aot_loader.c) only calls wasm_native_lookup_quick_aot_entry() at module
+ * *load* time, caching the result into WASMFuncType::quick_aot_entry - not a
+ * per-invocation hot path. Keep the compile-time initializer as a `const`
+ * template (PSRAM-backed for free via CONFIG_SPIRAM_RODATA), copy it into a
+ * PSRAM-resident mutable buffer, and sort/search that copy instead - same
+ * pattern as this session's native_syms/WiFi OSI vtable fixes. Defined
+ * locally (not via AkiraOS's AKIRA_BULK_BSS) to keep this vendored file
+ * free of app-specific header includes; CONFIG_AKIRA_PSRAM is visible here
+ * like any other Kconfig symbol under Zephyr's build. */
+#if defined(CONFIG_AKIRA_PSRAM)
+#define QUICK_AOT_ENTRIES_BULK_BSS __attribute__((section(".ext_ram.bss"), aligned(4)))
+#else
+#define QUICK_AOT_ENTRIES_BULK_BSS
+#endif
+
 /* clang-format off */
-static QuickAOTEntry quick_aot_entries[] = {
+static const QuickAOTEntry quick_aot_entries_ro[] = {
     { "()v", invoke_no_args_v },
     { "()i", invoke_no_args_i },
     { "()I", invoke_no_args_I },
@@ -1470,6 +1488,9 @@ static QuickAOTEntry quick_aot_entries[] = {
 };
 /* clang-format on */
 
+static QuickAOTEntry QUICK_AOT_ENTRIES_BULK_BSS
+    quick_aot_entries[sizeof(quick_aot_entries_ro) / sizeof(QuickAOTEntry)];
+
 static int
 quick_aot_entry_cmp(const void *quick_aot_entry1, const void *quick_aot_entry2)
 {
@@ -1480,6 +1501,8 @@ quick_aot_entry_cmp(const void *quick_aot_entry1, const void *quick_aot_entry2)
 static bool
 quick_aot_entry_init(void)
 {
+    memcpy(quick_aot_entries, quick_aot_entries_ro, sizeof(quick_aot_entries_ro));
+
     qsort(quick_aot_entries, sizeof(quick_aot_entries) / sizeof(QuickAOTEntry),
           sizeof(QuickAOTEntry), quick_aot_entry_cmp);
 
